@@ -2,9 +2,6 @@ using UnityEngine;
 using System.Collections.Generic;
 using System;
 
-//const float INF_float = 1000000000.0f;
-//const int INF = 1000000000;
-
 public struct Ray {
     public Vector3 origin;
     public Vector3 dir;
@@ -44,10 +41,14 @@ public struct Triangle {
 [RequireComponent(typeof(Camera))]
 public class Ray_Tracing_Manager : MonoBehaviour
 {
+    public const float INFF = 1000000000.0f;
+    public const float eps = 0.01f;
+    public const int INF = 1000000000;
+
     public static int textureWidth;
     public static int textureHeight;
 
-    private Texture2D renderTexture; // Texture to manipulate and display
+    private Texture2D renderTexture, renderTexture2; // Texture to manipulate and display
     private Camera cam;
 
     // For ray tracing
@@ -60,8 +61,9 @@ public class Ray_Tracing_Manager : MonoBehaviour
     public List<Triangle> light_source_triangles;
     public List<Triangle> render_object_triangles;
 
-    public int k = 0, p = 0;
-    public const int bounce_limit = 1;
+    public int k = 0;
+    public const int bounce_limit = 3;
+    public const int pixel_chunks = 10;
     System.Random rnd;
 
     public int[,] number_of_hits;
@@ -92,6 +94,8 @@ public class Ray_Tracing_Manager : MonoBehaviour
         // Create a texture for rendering
         renderTexture = new Texture2D(textureWidth, textureHeight, TextureFormat.RGB24, false);
         renderTexture.filterMode = FilterMode.Point;
+        renderTexture2 = new Texture2D(textureWidth, textureHeight, TextureFormat.RGB24, false);
+        renderTexture2.filterMode = FilterMode.Point;
 
         light_source_triangles = new List<Triangle>();
         render_object_triangles = new List<Triangle>();
@@ -159,6 +163,9 @@ public class Ray_Tracing_Manager : MonoBehaviour
                 ));
             }
         }
+
+        //Debug.Log(render_object_triangles.Count);
+        //Debug.Log(light_source_triangles.Count);
     }
     
     void InitializeTexture(Color color)
@@ -169,47 +176,58 @@ public class Ray_Tracing_Manager : MonoBehaviour
             for (int x = 0; x < textureWidth; x++)
             {
                 renderTexture.SetPixel(x, y, color);
+                renderTexture2.SetPixel(x, y, color);
             }
         }
-        renderTexture.Apply();
+        renderTexture2.Apply();
     }
     
     void OnGUI()
     {
         // Step 5: Draw the texture to the screen
-        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), renderTexture);
+        for (int x = 0; x < textureWidth; x++)
+            for (int y = 0; y < textureHeight; y++)
+                renderTexture2.SetPixel(x, y, renderTexture.GetPixel(x, y) * 1.0f);
+        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), renderTexture2);
     }
 
     void Update()
     {
-        for (int i = 0; i < 100; i++)
-        {
-            int x = rnd.Next(textureWidth / 5);
-            int y = rnd.Next(textureHeight / 5);
-            // Calculate the new position on the image plane
-            Vector3 new_position = bottomLeft + height * (((1f * y + 0.5f) / (textureHeight / 5 - 1))) + length * (((1f * x + 0.5f) / (textureWidth / 5 - 1)));
-
-            // Compute the direction vector
-            Vector3 dir = (new_position - mainCamera.transform.position).normalized;
-
-            p = bounce_limit;
-            k++;
-            // Create a custom Ray instance
-            Ray ray = new Ray(mainCamera.transform.position, dir, Color.white);
-            Color new_color = Ray_trace(ray);
-            new_color = (renderTexture.GetPixel(5 * x, 5 * y) / 3.0f * number_of_hits[5 * x, 5 * y] + new_color) / (number_of_hits[5 * x, 5 * y] + 1);
-            //renderTexture.SetPixel(x, y, new_color * 2);
-            //number_of_hits[x, y]++;
-            for (int j = 5 * x; j < 5 * x + 5; j++)
+        int p = textureWidth / pixel_chunks, q = textureHeight / pixel_chunks;
+        for (int ii = 0; ii < 1; ii++) {
+            //for (int x = p * 2 / 5; x < p * 3 / 5; x++)
+            //{
+            //    for (int y = q / 3; y < q * 2 / 3; y++)
+            //    {
+            for (int x = 0; x < p; x++)
             {
-                for (int l = 5 * y; l < 5 * y + 5; l++)
+                for (int y = 0; y < q; y++)
                 {
-                    renderTexture.SetPixel(j, l, new_color * 3.0f);
-                    number_of_hits[j, l]++;
+                    // Calculate the new position on the image plane
+                    Vector3 new_position = bottomLeft + height * (((1f * y + (float)rnd.NextDouble()) / (textureHeight / pixel_chunks - 1))) + length * (((1f * x + (float)rnd.NextDouble()) / (textureWidth / pixel_chunks - 1)));
+                    // Compute the direction vector
+                    Vector3 dir = (new_position - mainCamera.transform.position).normalized;
+
+                    k++;
+                    // Create a custom Ray instance
+                    Ray ray = new Ray(mainCamera.transform.position, dir, Color.white);
+                    Color new_color = Ray_trace(ray, bounce_limit);
+                    float f = 1.0f / (number_of_hits[pixel_chunks * x, pixel_chunks * y] + 1);
+                    new_color = (f * number_of_hits[pixel_chunks * x, pixel_chunks * y] * renderTexture.GetPixel(pixel_chunks * x, pixel_chunks * y) + f * new_color);
+                    //renderTexture.SetPixel(x, y, new_color * 2);
+                    //number_of_hits[pixel_chunks * x, pixel_chunks * y]++;
+                    for (int j = pixel_chunks * x; j < pixel_chunks * (x + 1); j++)
+                    {
+                        for (int l = pixel_chunks * y; l < pixel_chunks * (y + 1); l++)
+                        {
+                            renderTexture.SetPixel(j, l, new_color);
+                            number_of_hits[j, l]++;
+                        }
+                    }
                 }
             }
         }
-        renderTexture.Apply(); // Apply the changes to the texture
+        renderTexture2.Apply(); // Apply the changes to the texture
     }
 
     float Ray_to_triangle_distance_to_hit(Ray ray, Triangle triangle)
@@ -278,7 +296,7 @@ public class Ray_Tracing_Manager : MonoBehaviour
             Vector3 point = new Vector3(x, y, z);
             float dst_sqrd = Vector3.Dot(point, point);
 
-            if (dst_sqrd > 1)
+            if (dst_sqrd > 1.0f)
                 continue;
 
             if (Vector3.Dot(point, normal) < 0.0f)
@@ -289,18 +307,18 @@ public class Ray_Tracing_Manager : MonoBehaviour
         return Vector3.zero;
     }
 
-    Color Ray_trace(Ray ray)
-    { 
+    Color Ray_trace(Ray ray, int p)
+    {
         bool is_hit = false;
         bool hit_light = false;
-        Vector3 hit_point;
-        float distance_to_hit = 1000000000.0f;
+        Vector3 hit_point = Vector3.zero;
+        float distance_to_hit = INFF;
         Triangle triangle = new Triangle(Vector3.zero, Vector3.zero, Vector3.zero, new Material(Color.black));
 
         for (int i = 0; i < light_source_triangles.Count; i++)
         {
             float dst = Ray_to_triangle_distance_to_hit(ray, light_source_triangles[i]);
-            if (dst == -1.0f || dst > distance_to_hit)
+            if (dst < eps || dst > distance_to_hit)
                 continue;
             is_hit = true;
             hit_light = true;
@@ -311,33 +329,33 @@ public class Ray_Tracing_Manager : MonoBehaviour
         for (int i = 0; i < render_object_triangles.Count; i++)
         {
             float dst = Ray_to_triangle_distance_to_hit(ray, render_object_triangles[i]);
-            if (dst == -1.0f || dst > distance_to_hit)
+            if (dst < eps || dst > distance_to_hit)
                 continue;
             is_hit = true;
             hit_light = false;
             distance_to_hit = dst;
             triangle = render_object_triangles[i];
         }
+        distance_to_hit -= eps;
 
         if (!is_hit)
             return Color.black;
         
-        hit_point = ray.origin + ray.dir * distance_to_hit;
         ray.color *= triangle.material.color;
 
         if (hit_light)
             return ray.color;
         if (p <= 0)
             return Color.black;
-        
-        p--;
+
+        hit_point = ray.origin + ray.dir * distance_to_hit;
         ray.origin = hit_point;
         Vector3 normal = Find_triangle_normal(triangle, hit_point);
         if (Vector3.Dot(ray.dir, normal) > 0.0f)
             normal = -normal;
         ray.dir = Choose_reflection_dir(ray.dir, normal);
-        ray.color *= Vector3.Dot(normal, ray.dir);
+        ray.color *= Vector3.Dot(ray.dir, normal);
 
-        return Ray_trace(ray);
+        return Ray_trace(ray, p - 1);
     }
 }
